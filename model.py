@@ -46,21 +46,39 @@ class BiRNN(object):
 		with tf.name_scope('bw_rnn'), tf.variable_scope('bw_rnn'):
 			outputs, _, _ = tf.contrib.rnn.static_bidirectional_rnn(lstm_fw_cell_m, lstm_bw_cell_m, inputs, dtype=tf.float32)
 
-		# outputs shape: (sequence_length, batch_size, 2*rnn_size)
-		softmax_w = tf.Variable(tf.truncated_normal([2*rnn_size, n_classes], stddev=0.1), name='softmax_w')
-		softmax_b = tf.Variable(tf.zeros([n_classes]), name='softmax_b')
+		# 定义attention layer 
+		attention_size = 2 * rnn_size
+		with tf.name_scope('attention'), tf.variable_scope('attention'):
+			attention_w = tf.Variable(tf.truncated_normal([2*rnn_size, attention_size], stddev=0.1), name='attention_w')
+			attention_b = tf.Variable(tf.constant(0.1, shape=[attention_size]), name='attention_b')
+			u_list = []
+			for t in xrange(sequence_length):
+				u_t = tf.tanh(tf.matmul(outputs[t], attention_w) + attention_b) 
+				u_list.append(u_t)
+			u_w = tf.Variable(tf.truncated_normal([attention_size, 1], stddev=0.1), name='attention_uw')
+			attn_z = []
+			for t in xrange(sequence_length):
+				z_t = tf.matmul(u_list[t], u_w)
+				attn_z.append(z_t)
+			# transform to batch_size * sequence_length
+			attn_zconcat = tf.concat(attn_z, axis=1)
+			self.alpha = tf.nn.softmax(attn_zconcat)
+			# transform to sequence_length * batch_size * 1 , same rank as outputs
+			alpha_trans = tf.reshape(tf.transpose(self.alpha, [1,0]), [sequence_length, -1, 1])
+			self.final_output = tf.reduce_sum(outputs * alpha_trans, 0)
 
-		# 用于分类任务, outputs取最终一个时刻的输出
-		self.logits = tf.matmul(outputs[-1], softmax_w) + softmax_b
-		self.prob = tf.nn.softmax(self.logits)
+		print self.final_output.shape
+		#self.final_output = outputs[-1]
+
+		with tf.name_scope('fc'), tf.variable_scope('fc'):
+		# outputs shape: (sequence_length, batch_size, 2*rnn_size)
+			softmax_w = tf.Variable(tf.truncated_normal([2*rnn_size, n_classes], stddev=0.1), name='softmax_w')
+			softmax_b = tf.Variable(tf.zeros([n_classes]), name='softmax_b')
+
+			self.logits = tf.matmul(self.final_output, softmax_w) + softmax_b
+			self.prob = tf.nn.softmax(self.logits)
 
 		self.cost = tf.losses.softmax_cross_entropy(self.targets, self.logits)
-		self.lr = tf.Variable(0.0, trainable=False)
-		tvars = tf.trainable_variables()
-		grads, _ = tf.clip_by_global_norm(tf.gradients(self.cost, tvars), grad_clip)
-
-		optimizer = tf.train.AdamOptimizer(self.lr)
-		self.train_op = optimizer.apply_gradients(zip(grads, tvars))
 		self.accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(self.targets, axis=1), tf.argmax(self.prob, axis=1)), tf.float32))
 
 	def inference(self, sess, labels, inputs):
@@ -70,6 +88,16 @@ class BiRNN(object):
 		ret = [labels[i] for i in ret]
 		return ret
 
+	def optimize(self):
+		"""define optimize operation"""
+		self.lr = tf.Variable(0.0, trainable=False)
+		tvars = tf.trainable_variables()
+		grads, _ = tf.clip_by_global_norm(tf.gradients(self.cost, tvars), grad_clip)
+		optimizer = tf.train.AdamOptimizer(self.lr)
+		self.train_op = optimizer.apply_gradients(zip(grads, tvars))
+		return self.train_op
+
 
 if __name__ == '__main__':
+	# test model define
 	model = BiRNN(128, 2, 100, 50, 30, 3000, 5)
