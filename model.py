@@ -68,7 +68,6 @@ class BiRNN(object):
 			self.final_output = tf.reduce_sum(outputs * alpha_trans, 0)
 
 		print self.final_output.shape
-		#self.final_output = outputs[-1]
 
 		with tf.name_scope('fc'), tf.variable_scope('fc'):
 		# outputs shape: (sequence_length, batch_size, 2*rnn_size)
