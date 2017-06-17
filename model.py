@@ -79,6 +79,7 @@ class BiRNN(object):
 
 		self.cost = tf.losses.softmax_cross_entropy(self.targets, self.logits)
 		self.accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(self.targets, axis=1), tf.argmax(self.prob, axis=1)), tf.float32))
+		self.train_op = self.optimize()
 
 	def inference(self, sess, labels, inputs):
 
@@ -89,12 +90,12 @@ class BiRNN(object):
 
 	def optimize(self):
 		"""define optimize operation"""
-		self.lr = tf.Variable(0.0, trainable=False)
+		#self.lr = tf.Variable(0.001, trainable=False)
 		tvars = tf.trainable_variables()
 		grads, _ = tf.clip_by_global_norm(tf.gradients(self.cost, tvars), grad_clip)
-		optimizer = tf.train.AdamOptimizer(self.lr)
-		self.train_op = optimizer.apply_gradients(zip(grads, tvars))
-		return self.train_op
+		optimizer = tf.train.AdamOptimizer(1e-3)
+		train_op = optimizer.apply_gradients(zip(grads, tvars))
+		return train_op
 
 
 if __name__ == '__main__':
