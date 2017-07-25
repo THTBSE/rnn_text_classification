@@ -7,7 +7,19 @@ class BiRNN(object):
 	"""
 	用于文本分类的双向RNN
 	"""
-	def __init__(self, rnn_size, layer_size, vocab_size, batch_size, sequence_length, n_classes, grad_clip):
+	def __init__(self, embedding_size, rnn_size, layer_size, 
+		vocab_size, attn_size, sequence_length, n_classes, grad_clip, learning_rate):
+		"""
+		- embedding_size: word embedding dimension
+		- rnn_size : hidden state dimension
+		- layer_size : number of rnn layers
+		- vocab_size : vocabulary size
+		- attn_size : attention layer dimension
+		- sequence_length : max sequence length
+		- n_classes : number of target labels
+		- grad_clip : gradient clipping threshold
+		- learning_rate : initial learning rate
+		"""
 
 		self.output_keep_prob = tf.placeholder(tf.float32, name='output_keep_prob')
 		self.input_data = tf.placeholder(tf.int32, shape=[None, sequence_length], name='input_data')
@@ -27,7 +39,7 @@ class BiRNN(object):
 
 
 		with tf.device('/cpu:0'):
-			embedding = tf.Variable(tf.truncated_normal([vocab_size, rnn_size], stddev=0.1), name='embedding')
+			embedding = tf.Variable(tf.truncated_normal([vocab_size, embedding_size], stddev=0.1), name='embedding')
 			inputs = tf.nn.embedding_lookup(embedding, self.input_data)
 
 		# self.input_data shape: (batch_size , sequence_length)
@@ -43,11 +55,11 @@ class BiRNN(object):
 		# 转换成list,里面的每个元素是(batch_size, rnn_size)
 		inputs = tf.split(inputs, sequence_length, 0)
 
-		with tf.name_scope('bw_rnn'), tf.variable_scope('bw_rnn'):
+		with tf.name_scope('bi_rnn'), tf.variable_scope('bi_rnn'):
 			outputs, _, _ = tf.contrib.rnn.static_bidirectional_rnn(lstm_fw_cell_m, lstm_bw_cell_m, inputs, dtype=tf.float32)
 
 		# 定义attention layer 
-		attention_size = 2 * rnn_size
+		attention_size = attn_size
 		with tf.name_scope('attention'), tf.variable_scope('attention'):
 			attention_w = tf.Variable(tf.truncated_normal([2*rnn_size, attention_size], stddev=0.1), name='attention_w')
 			attention_b = tf.Variable(tf.constant(0.1, shape=[attention_size]), name='attention_b')
@@ -68,18 +80,23 @@ class BiRNN(object):
 			self.final_output = tf.reduce_sum(outputs * alpha_trans, 0)
 
 		print self.final_output.shape
-
-		with tf.name_scope('fc'), tf.variable_scope('fc'):
 		# outputs shape: (sequence_length, batch_size, 2*rnn_size)
-			softmax_w = tf.Variable(tf.truncated_normal([2*rnn_size, n_classes], stddev=0.1), name='softmax_w')
-			softmax_b = tf.Variable(tf.zeros([n_classes]), name='softmax_b')
+		fc_w = tf.Variable(tf.truncated_normal([2*rnn_size, n_classes], stddev=0.1), name='fc_w')
+		fc_b = tf.Variable(tf.zeros([n_classes]), name='fc_b')
 
-			self.logits = tf.matmul(self.final_output, softmax_w) + softmax_b
-			self.prob = tf.nn.softmax(self.logits)
+		#self.final_output = outputs[-1]
+
+		# 用于分类任务, outputs取最终一个时刻的输出
+		self.logits = tf.matmul(self.final_output, fc_w) + fc_b
+		self.prob = tf.nn.softmax(self.logits)
 
 		self.cost = tf.losses.softmax_cross_entropy(self.targets, self.logits)
+		tvars = tf.trainable_variables()
+		grads, _ = tf.clip_by_global_norm(tf.gradients(self.cost, tvars), grad_clip)
+
+		optimizer = tf.train.AdamOptimizer(learning_rate)
+		self.train_op = optimizer.apply_gradients(zip(grads, tvars))
 		self.accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(self.targets, axis=1), tf.argmax(self.prob, axis=1)), tf.float32))
-		self.train_op = self.optimize()
 
 	def inference(self, sess, labels, inputs):
 
@@ -88,16 +105,6 @@ class BiRNN(object):
 		ret = [labels[i] for i in ret]
 		return ret
 
-	def optimize(self):
-		"""define optimize operation"""
-		#self.lr = tf.Variable(0.001, trainable=False)
-		tvars = tf.trainable_variables()
-		grads, _ = tf.clip_by_global_norm(tf.gradients(self.cost, tvars), grad_clip)
-		optimizer = tf.train.AdamOptimizer(1e-3)
-		train_op = optimizer.apply_gradients(zip(grads, tvars))
-		return train_op
-
 
 if __name__ == '__main__':
-	# test model define
-	model = BiRNN(128, 2, 100, 50, 30, 3000, 5)
+	model = BiRNN(128, 128, 2, 100, 256, 50, 30, 5, 0.001)
